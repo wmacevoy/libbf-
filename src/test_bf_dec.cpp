@@ -1,6 +1,9 @@
 #include <iostream>
 #include <sstream>
 #include <cmath>
+#include <climits>
+#include <cstdint>
+#include <string>
 #include "bf.hpp"
 #include "facts.h"
 
@@ -248,6 +251,167 @@ FACTS(BFDec_Stream) {
   FACT(oss.str(), ==, std::string("0.1"));
 }
 
+// ── Integer boundary edge cases ─────────────────────────────────────
+
+FACTS(BFDec_IntBoundaries) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // INT64_MAX / MIN
+  int64_t i64max = INT64_MAX;
+  int64_t i64min = INT64_MIN;
+  BFDec bmax(i64max);
+  BFDec bmin(i64min);
+  FACT(bmax > BFDec(0), ==, true);
+  FACT(bmin < BFDec(0), ==, true);
+  FACT(bmax > bmin, ==, true);
+  FACT((bmax + BFDec(1)) - bmax == BFDec(1), ==, true);
+
+  // String round-trip
+  std::string smax = bmax.to_string();
+  FACT(BFDec(smax).to_string(), ==, smax);
+  std::string smin = bmin.to_string();
+  FACT(BFDec(smin).to_string(), ==, smin);
+
+  // UINT64_MAX
+  uint64_t u64max = UINT64_MAX;
+  BFDec bumax(u64max);
+  FACT(bumax > bmax, ==, true);
+  std::string sumax = bumax.to_string();
+  FACT(BFDec(sumax).to_string(), ==, sumax);
+
+  // 2^53 boundary
+  int64_t pow2_53 = int64_t(1) << 53;
+  BFDec b53(pow2_53);
+  BFDec b53p1(pow2_53 + 1);
+  BFDec b53m1(pow2_53 - 1);
+
+  FACT(b53m1 < b53, ==, true);
+  FACT(b53 < b53p1, ==, true);
+  FACT(b53p1 - b53 == BFDec(1), ==, true);
+
+  // double can't distinguish 2^53+1, but BFDec can
+  FACT(b53p1 == b53, ==, false);
+}
+
+// ── Very large / very small decimal values ──────────────────────────
+
+FACTS(BFDec_ExtremeValues) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // 10^34 (at the edge of 34-digit precision)
+  BFDec big = pow(BFDec(10), 34);
+  FACT(big > BFDec(0), ==, true);
+  FACT(big.is_finite(), ==, true);
+  FACT(big / big == BFDec(1), ==, true);
+
+  // 10^100 from string
+  BFDec googol("1" + std::string(100, '0'));
+  FACT(googol.is_finite(), ==, true);
+  std::string sgoogol = googol.to_string();
+  FACT(BFDec(sgoogol) == googol, ==, true);
+
+  // Very small: 10^-34
+  BFDec tiny = BFDec(1) / pow(BFDec(10), 34);
+  FACT(tiny > BFDec(0), ==, true);
+  FACT(tiny.is_finite(), ==, true);
+
+  // Very small from string
+  BFDec point_small("0." + std::string(33, '0') + "1");
+  FACT(point_small > BFDec(0), ==, true);
+  FACT(point_small.is_finite(), ==, true);
+
+  // Near-overflow double: value beyond double max is still finite in BFDec
+  BFDec beyond_dbl("1" + std::string(309, '0'));
+  FACT(beyond_dbl.is_finite(), ==, true);
+  FACT(std::isinf(beyond_dbl.to_double()), ==, true);
+
+  // Near-underflow double: very small value
+  BFDec near_zero("0." + std::string(323, '0') + "1");
+  FACT(near_zero > BFDec(0), ==, true);
+  FACT(near_zero.is_finite(), ==, true);
+}
+
+// ── Powers of 2 in decimal ──────────────────────────────────────────
+
+FACTS(BFDec_PowersOf2) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // 0.5 = 1/2 is exact
+  BFDec half("0.5");
+  FACT(half + half == BFDec(1), ==, true);
+
+  // 0.25 = 1/4 is exact
+  BFDec quarter("0.25");
+  FACT(quarter * BFDec(4) == BFDec(1), ==, true);
+
+  // 0.125 = 1/8 is exact
+  BFDec eighth("0.125");
+  FACT(eighth * BFDec(8) == BFDec(1), ==, true);
+
+  // 0.0625 = 1/16
+  BFDec sixteenth("0.0625");
+  FACT(sixteenth * BFDec(16) == BFDec(1), ==, true);
+
+  // 2^10 = 1024
+  FACT(pow(BFDec(2), 10) == BFDec(1024), ==, true);
+
+  // 2^20 = 1048576
+  FACT(pow(BFDec(2), 20) == BFDec(1048576), ==, true);
+
+  // Negative powers: 2^-1 * 2 == 1
+  BFDec inv2 = BFDec(1) / BFDec(2);
+  FACT(inv2 == BFDec("0.5"), ==, true);
+
+  // 2^-10 = 1/1024
+  BFDec inv1024 = BFDec(1) / BFDec(1024);
+  FACT(inv1024 * BFDec(1024) == BFDec(1), ==, true);
+
+  // 2^53 is exact in decimal
+  BFDec p53 = pow(BFDec(2), 53);
+  FACT(p53 == BFDec("9007199254740992"), ==, true);
+
+  // 2^64
+  BFDec p64 = pow(BFDec(2), 64);
+  FACT(p64 == BFDec("18446744073709551616"), ==, true);
+}
+
+// ── Decimal exactness edge cases ────────────────────────────────────
+
+FACTS(BFDec_DecimalEdgeCases) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // Trailing zeros don't affect value
+  FACT(BFDec("0.10") == BFDec("0.1"), ==, true);
+  FACT(BFDec("42.00") == BFDec("42"), ==, true);
+  FACT(BFDec("100") == BFDec("1e2"), ==, true);
+
+  // Many-digit exact arithmetic
+  BFDec a("99999999999999999999999999999999.99");
+  BFDec b("0.01");
+  FACT(a + b == BFDec("100000000000000000000000000000000"), ==, true);
+
+  // Subtraction of close values
+  BFDec x("1.000000000000000000000000000000001");
+  BFDec y("1.000000000000000000000000000000000");
+  BFDec diff = x - y;
+  FACT(diff > BFDec(0), ==, true);
+  FACT(diff == BFDec("0.000000000000000000000000000000001"), ==, true);
+
+  // Negative zero
+  BFDec nz = BFDec(0) - BFDec(0);
+  FACT(nz.is_zero(), ==, true);
+
+  // Multiplication by powers of 10 is exact
+  BFDec v("1.23456789");
+  FACT(v * BFDec(10) == BFDec("12.3456789"), ==, true);
+  FACT(v * BFDec(100) == BFDec("123.456789"), ==, true);
+  FACT(v * BFDec(1000) == BFDec("1234.56789"), ==, true);
+}
+
 FACTS_REGISTER_ALL() {
   FACTS_REGISTER(BFDec_Constructors);
   FACTS_REGISTER(BFDec_Exactness);
@@ -259,6 +423,10 @@ FACTS_REGISTER_ALL() {
   FACTS_REGISTER(BFDec_Precision);
   FACTS_REGISTER(BFDec_RefCounting);
   FACTS_REGISTER(BFDec_Stream);
+  FACTS_REGISTER(BFDec_IntBoundaries);
+  FACTS_REGISTER(BFDec_ExtremeValues);
+  FACTS_REGISTER(BFDec_PowersOf2);
+  FACTS_REGISTER(BFDec_DecimalEdgeCases);
 }
 
 FACTS_MAIN

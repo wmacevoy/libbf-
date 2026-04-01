@@ -113,39 +113,39 @@ FACTS(Numeric_Construction) {
 
   // From double
   numeric nd(42.0);
-  FACT(nd.type, ==, numeric::DOUBLE);
+  FACT(nd.type, ==, numeric::NUMBER);
   FACT(nd.lo, ==, 42.0);
   FACT(nd.hi, ==, 42.0);
 
   // From int64_t — small fits in double
   numeric ni(int64_t(100));
-  FACT(ni.type, ==, numeric::DOUBLE);
+  FACT(ni.type, ==, numeric::NUMBER);
   FACT(ni.lo, ==, 100.0);
 
   // From int64_t — large exceeds double precision
   int64_t big = (int64_t(1) << 53) + 1;
   numeric nbig(big);
-  FACT(nbig.type, ==, numeric::FLOAT);
+  FACT(nbig.type, ==, numeric::BIGFLOAT);
 
   // From BF — exact in double
   numeric nbf_exact(BF(0.5));
-  FACT(nbf_exact.type, ==, numeric::FLOAT);
+  FACT(nbf_exact.type, ==, numeric::BIGFLOAT);
   FACT(nbf_exact.lo, ==, 0.5);
   FACT(nbf_exact.hi, ==, 0.5);
 
   // From BF — not exact in double
   numeric nbf(sqrt(BF(2)));
-  FACT(nbf.type, ==, numeric::FLOAT);
+  FACT(nbf.type, ==, numeric::BIGFLOAT);
   FACT(nbf.lo < nbf.hi, ==, true);
 
   // From BFDec — exact in double
   numeric ndec_exact(BFDec("0.5"));
-  FACT(ndec_exact.type, ==, numeric::DECIMAL);
+  FACT(ndec_exact.type, ==, numeric::BIGDECIMAL);
   FACT(ndec_exact.lo, ==, 0.5);
 
   // From BFDec — not exact in double
   numeric ndec(BFDec("0.1"));
-  FACT(ndec.type, ==, numeric::DECIMAL);
+  FACT(ndec.type, ==, numeric::BIGDECIMAL);
   FACT(ndec.lo < ndec.hi, ==, true);
 
   // From unbound
@@ -163,23 +163,23 @@ FACTS(Numeric_Assignment) {
   retain<BFContext> use(&context);
 
   numeric n(0.0);
-  FACT(n.type, ==, numeric::DOUBLE);
+  FACT(n.type, ==, numeric::NUMBER);
 
   n = 42.0;
-  FACT(n.type, ==, numeric::DOUBLE);
+  FACT(n.type, ==, numeric::NUMBER);
   FACT(n.lo, ==, 42.0);
 
   n = BF(3);
-  FACT(n.type, ==, numeric::FLOAT);
+  FACT(n.type, ==, numeric::BIGFLOAT);
 
   n = BFDec("0.1");
-  FACT(n.type, ==, numeric::DECIMAL);
+  FACT(n.type, ==, numeric::BIGDECIMAL);
 
   n = unbound("y");
   FACT(n.type, ==, numeric::UNBOUND);
 
   n = int64_t(7);
-  FACT(n.type, ==, numeric::DOUBLE);
+  FACT(n.type, ==, numeric::NUMBER);
   FACT(n.lo, ==, 7.0);
 }
 
@@ -275,6 +275,15 @@ FACTS(Numeric_Output) {
   oss.str(""); oss << numeric(BF(42));
   FACT(oss.str(), ==, std::string("42L"));
 
+  // BigInt suffix
+  {
+    numeric n_bigint(0.0);
+    std::istringstream iss("42N");
+    iss >> n_bigint;
+    oss.str(""); oss << n_bigint;
+    FACT(oss.str(), ==, std::string("42N"));
+  }
+
   // BigDecimal suffix
   oss.str(""); oss << numeric(BFDec("0.1"));
   FACT(oss.str(), ==, std::string("0.1M"));
@@ -311,34 +320,34 @@ FACTS(Numeric_Input) {
 
   // Plain double
   { std::istringstream iss("42"); iss >> n;
-    FACT(n.type, ==, numeric::DOUBLE);
+    FACT(n.type, ==, numeric::NUMBER);
     FACT(n.lo, ==, 42.0); }
 
   { std::istringstream iss("-3.14"); iss >> n;
-    FACT(n.type, ==, numeric::DOUBLE);
+    FACT(n.type, ==, numeric::NUMBER);
     FACT(n.lo, ==, -3.14); }
 
   { std::istringstream iss("1e10"); iss >> n;
-    FACT(n.type, ==, numeric::DOUBLE);
+    FACT(n.type, ==, numeric::NUMBER);
     FACT(n.lo, ==, 1e10); }
 
   // BigFloat
   { std::istringstream iss("3.14L"); iss >> n;
-    FACT(n.type, ==, numeric::FLOAT); }
+    FACT(n.type, ==, numeric::BIGFLOAT); }
 
   { std::istringstream iss("42l"); iss >> n;
-    FACT(n.type, ==, numeric::FLOAT); }
+    FACT(n.type, ==, numeric::BIGFLOAT); }
 
   // BigDecimal
   { std::istringstream iss("0.1M"); iss >> n;
-    FACT(n.type, ==, numeric::DECIMAL); }
+    FACT(n.type, ==, numeric::BIGDECIMAL); }
 
   { std::istringstream iss("67432.50m"); iss >> n;
-    FACT(n.type, ==, numeric::DECIMAL); }
+    FACT(n.type, ==, numeric::BIGDECIMAL); }
 
-  // BigInt (N suffix -> stored as BF)
+  // BigInt (N suffix)
   { std::istringstream iss("42N"); iss >> n;
-    FACT(n.type, ==, numeric::FLOAT); }
+    FACT(n.type, ==, numeric::BIGINT); }
 
   // Anonymous unbound
   { std::istringstream iss("?"); iss >> n;
@@ -403,18 +412,28 @@ FACTS(Numeric_RoundTrip) {
   // Double round-trip
   numeric d(42.0);
   numeric d_rt = round_trip(d);
-  FACT(d_rt.type, ==, numeric::DOUBLE);
+  FACT(d_rt.type, ==, numeric::NUMBER);
   FACT(d_rt.lo, ==, 42.0);
 
   // BFDec round-trip
   numeric dec(BFDec("0.1"));
   numeric dec_rt = round_trip(dec);
-  FACT(dec_rt.type, ==, numeric::DECIMAL);
+  FACT(dec_rt.type, ==, numeric::BIGDECIMAL);
 
   // BF round-trip
   numeric bf(BF(42));
   numeric bf_rt = round_trip(bf);
-  FACT(bf_rt.type, ==, numeric::FLOAT);
+  FACT(bf_rt.type, ==, numeric::BIGFLOAT);
+
+  // BigInt round-trip
+  {
+    std::istringstream iss("9007199254740993N");
+    numeric bigint_orig(0.0);
+    iss >> bigint_orig;
+    FACT(bigint_orig.type, ==, numeric::BIGINT);
+    numeric bigint_rt = round_trip(bigint_orig);
+    FACT(bigint_rt.type, ==, numeric::BIGINT);
+  }
 
   // Unbound round-trips
   numeric u_anon{unbound()};

@@ -103,30 +103,60 @@ inline std::ostream &operator<<(std::ostream &os, const NumericVariant &n) {
     return os;
 }
 
+// ── QJSON type IDs (bitmask layout) ─────────────────────────────────
+// Group bits: 0x10=BOOLEAN, 0x20=NUMERIC, 0x40=BLOB, 0x80=STRING,
+//             0x100=CONTAINER.  UNBOUND has all bits set.
+enum qjson_type : uint16_t {
+    QJSON_NULL       = 0x000,  // 0b0'0000'0000
+    QJSON_FALSE      = 0x010,  // 0b0'0001'0000
+    QJSON_TRUE       = 0x011,  // 0b0'0001'0001
+    QJSON_NUMBER     = 0x021,  // 0b0'0010'0001
+    QJSON_BIGINT     = 0x022,  // 0b0'0010'0010
+    QJSON_BIGDECIMAL = 0x024,  // 0b0'0010'0100
+    QJSON_BIGFLOAT   = 0x028,  // 0b0'0010'1000
+    QJSON_BLOB       = 0x040,  // 0b0'0100'0000
+    QJSON_STRING     = 0x081,  // 0b0'1000'0001
+    QJSON_ARRAY      = 0x101,  // 0b1'0000'0001
+    QJSON_OBJECT     = 0x102,  // 0b1'0000'0010
+    QJSON_UNBOUND    = 0x1FF,  // 0b1'1111'1111
+
+    // Group masks
+    QJSON_BOOLEAN    = 0x010,
+    QJSON_NUMERIC    = 0x020,
+    QJSON_CONTAINER  = 0x100,
+};
+
 // ── Bracket: double-interval projection of a numeric ────────────────
 // Fast double-precision comparison first; falls back to full-precision
 // string reconstruction only when double brackets overlap.
 
 struct numeric {
-    enum Type { FLOAT, DECIMAL, DOUBLE, UNBOUND };
+    // Type aliases for the numeric subset + UNBOUND
+    static constexpr qjson_type NUMBER     = QJSON_NUMBER;
+    static constexpr qjson_type BIGINT     = QJSON_BIGINT;
+    static constexpr qjson_type BIGDECIMAL = QJSON_BIGDECIMAL;
+    static constexpr qjson_type BIGFLOAT   = QJSON_BIGFLOAT;
+    static constexpr qjson_type UNBOUND    = QJSON_UNBOUND;
 
-    Type type;
+    qjson_type type;
+
     double lo;
     double hi;
     std::unique_ptr<std::string> rep;
 
     NumericVariant variant() const {
         switch (type) {
-        case FLOAT:   return NumericVariant((rep == nullptr) ? BF(lo) : BF(*rep));
-        case DECIMAL: return NumericVariant((rep == nullptr) ? BFDec(lo) : BFDec(*rep));
-        case DOUBLE:  return NumericVariant(lo);
-        case UNBOUND: return NumericVariant((rep == nullptr) ? unbound() : unbound(*rep));
+        case NUMBER:     return NumericVariant(lo);
+        case BIGINT:     return NumericVariant((rep == nullptr) ? BF(lo) : BF(*rep));
+        case BIGDECIMAL: return NumericVariant((rep == nullptr) ? BFDec(lo) : BFDec(*rep));
+        case BIGFLOAT:   return NumericVariant((rep == nullptr) ? BF(lo) : BF(*rep));
+        case UNBOUND:    return NumericVariant((rep == nullptr) ? unbound() : unbound(*rep));
+        default:         return NumericVariant(lo); // unreachable
         }
-        return NumericVariant(lo); // unreachable
     }
 
-  numeric& set(const BF &bf) {
-    type = FLOAT;
+  numeric& set(const BF &bf, qjson_type t = BIGFLOAT) {
+    type = t;
     lo = bf.to_double(BF_RNDD);
     hi = bf.to_double(BF_RNDU);
     rep = (lo == hi) ? nullptr : std::make_unique<std::string>(bf.to_string());
@@ -136,7 +166,7 @@ struct numeric {
   numeric& operator=(const BF &bf) { return set(bf); }
 
   numeric& set(const BFDec &dec) {
-    type = DECIMAL;
+    type = BIGDECIMAL;
     lo = dec.to_double(BF_RNDD);
     hi = dec.to_double(BF_RNDU);
     rep = (lo == hi) ? nullptr : std::make_unique<std::string>(dec.to_string());
@@ -146,7 +176,7 @@ struct numeric {
   numeric& operator=(const BFDec &dec) { return set(dec); }
 
   numeric& set(double d) {
-    type = DOUBLE;
+    type = NUMBER;
     lo = hi = d;
     rep = nullptr;
     return *this;
@@ -220,14 +250,17 @@ struct numeric {
 
   std::ostream& print(std::ostream &out) const {
     switch (type) {
-    case FLOAT:
-      if (rep == nullptr) { out << lo << "L"; } else { out << *rep << "L"; }
+    case NUMBER:
+      out << lo;
       break;
-    case DECIMAL:
+    case BIGINT:
+      if (rep == nullptr) { out << lo << "N"; } else { out << *rep << "N"; }
+      break;
+    case BIGDECIMAL:
       if (rep == nullptr) { out << lo << "M"; } else { out << *rep << "M"; }
       break;
-    case DOUBLE:
-      out << lo;
+    case BIGFLOAT:
+      if (rep == nullptr) { out << lo << "L"; } else { out << *rep << "L"; }
       break;
     case UNBOUND:
       out << '?';
@@ -235,6 +268,8 @@ struct numeric {
         if (needs_quoting(*rep)) write_quoted(out, *rep);
         else out << *rep;
       }
+      break;
+    default:
       break;
     }
     return out;
@@ -356,14 +391,13 @@ struct numeric {
       ch = in.peek();
       if (ch == 'L' || ch == 'l') {
         in.get();
-        result.set(BF(num));
+        result.set(BF(num), BIGFLOAT);
       } else if (ch == 'M' || ch == 'm') {
         in.get();
         result.set(BFDec(num));
       } else if (ch == 'N' || ch == 'n') {
         in.get();
-        // BigInt — store as BF with infinite precision
-        result.set(BF(num));
+        result.set(BF(num), BIGINT);
       } else {
         // plain double
         char *end;

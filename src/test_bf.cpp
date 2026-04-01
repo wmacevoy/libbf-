@@ -1,6 +1,8 @@
 #include <iostream>
 #include <sstream>
 #include <cmath>
+#include <climits>
+#include <cstdint>
 #include "bf.hpp"
 #include "facts.h"
 
@@ -265,6 +267,137 @@ FACTS(BF_Stream) {
   FACT(BF(oss.str()).is_zero(), ==, true);
 }
 
+// ── Integer boundary edge cases ─────────────────────────────────────
+
+FACTS(BF_IntBoundaries) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // INT64_MAX / MIN
+  int64_t i64max = INT64_MAX;   // 9223372036854775807
+  int64_t i64min = INT64_MIN;   // -9223372036854775808
+  BF bmax(i64max);
+  BF bmin(i64min);
+  FACT(bmax > BF(0), ==, true);
+  FACT(bmin < BF(0), ==, true);
+  FACT(bmax > bmin, ==, true);
+  FACT((bmax + BF(1)) - bmax == BF(1), ==, true);
+
+  // Round-trip through string
+  std::string smax = bmax.to_string();
+  FACT(BF(smax) == bmax, ==, true);
+  std::string smin = bmin.to_string();
+  FACT(BF(smin) == bmin, ==, true);
+
+  // UINT64_MAX
+  uint64_t u64max = UINT64_MAX; // 18446744073709551615
+  BF bumax(u64max);
+  FACT(bumax > bmax, ==, true);
+  FACT(bumax > BF(0), ==, true);
+  std::string sumax = bumax.to_string();
+  FACT(BF(sumax) == bumax, ==, true);
+
+  // 2^53 boundary: exact double threshold
+  int64_t pow2_53 = int64_t(1) << 53;       // 9007199254740992
+  BF b53(pow2_53);
+  BF b53p1(pow2_53 + 1);
+  BF b53m1(pow2_53 - 1);
+
+  // All distinct in BF
+  FACT(b53m1 < b53, ==, true);
+  FACT(b53 < b53p1, ==, true);
+  FACT(b53p1 - b53 == BF(1), ==, true);
+
+  // 2^53 is exact in double, 2^53+1 is not
+  FACT(b53.to_double(), ==, 9007199254740992.0);
+  // double can't distinguish 2^53+1 from 2^53
+  FACT(double(pow2_53 + 1), ==, double(pow2_53));
+  // but BF can
+  FACT(b53p1 == b53, ==, false);
+
+  // Negative 2^53 boundary
+  BF b53neg(-pow2_53);
+  BF b53neg_m1(-(pow2_53 + 1));
+  FACT(b53neg_m1 < b53neg, ==, true);
+  FACT(b53neg - b53neg_m1 == BF(1), ==, true);
+}
+
+// ── Very large / very small values ──────────────────────────────────
+
+FACTS(BF_ExtremeValues) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // Very large: 2^1000
+  BF big = pow(BF(2), BF(1000));
+  FACT(big > BF(0), ==, true);
+  FACT(big.is_finite(), ==, true);
+  // 2^1000 / 2^1000 == 1
+  FACT(big / big == BF(1), ==, true);
+  // 2^1000 * 2^-1000 == 1
+  BF big_inv = pow(BF(2), BF(-1000));
+  FACT(big * big_inv == BF(1), ==, true);
+
+  // Very small: 2^-1000
+  BF tiny = pow(BF(2), BF(-1000));
+  FACT(tiny > BF(0), ==, true);
+  FACT(tiny.is_finite(), ==, true);
+  FACT(tiny * big == BF(1), ==, true);
+
+  // 10^100 (googol)
+  BF googol = pow(BF(10), BF(100));
+  FACT(googol.is_finite(), ==, true);
+  FACT(googol / pow(BF(10), BF(50)) == pow(BF(10), BF(50)), ==, true);
+
+  // 10^-100
+  BF inv_googol = BF(1) / googol;
+  FACT(inv_googol > BF(0), ==, true);
+  FACT((inv_googol * googol - BF(1)).to_double() < 1e-70, ==, true);
+
+  // Near-overflow double boundary: 2^1024 (beyond double max)
+  BF beyond_dbl = pow(BF(2), BF(1024));
+  FACT(beyond_dbl.is_finite(), ==, true);
+  // to_double overflows to inf
+  FACT(std::isinf(beyond_dbl.to_double()), ==, true);
+
+  // Near-underflow: 2^-1074 (smallest subnormal double)
+  BF subnorm = pow(BF(2), BF(-1074));
+  FACT(subnorm > BF(0), ==, true);
+  FACT(subnorm.is_finite(), ==, true);
+  // to_double may flush to zero depending on rounding
+  double sd = subnorm.to_double(BF_RNDN);
+  FACT(sd >= 0.0, ==, true);
+}
+
+// ── Powers of 2 ─────────────────────────────────────────────────────
+
+FACTS(BF_PowersOf2) {
+  BFContext context(256, 34);
+  retain<BFContext> use(&context);
+
+  // Successive powers of 2 are exact
+  BF accum(1);
+  for (int i = 0; i < 64; ++i) {
+    FACT(accum == pow(BF(2), BF(i)), ==, true);
+    accum = accum * BF(2);
+  }
+
+  // 2^63 == 9223372036854775808
+  BF p63 = pow(BF(2), BF(63));
+  FACT(p63 == BF(uint64_t(1) << 63), ==, true);
+
+  // Negative powers of 2 are exact in binary float
+  BF half(0.5);
+  BF quarter = half * half;
+  FACT(quarter == BF(0.25), ==, true);
+  BF eighth = quarter * half;
+  FACT(eighth == BF(0.125), ==, true);
+
+  // 2^-10 = 1/1024
+  BF p_neg10 = pow(BF(2), BF(-10));
+  FACT(p_neg10 * BF(1024) == BF(1), ==, true);
+}
+
 FACTS_REGISTER_ALL() {
   FACTS_REGISTER(BF_Constructors);
   FACTS_REGISTER(BF_Arithmetic);
@@ -275,6 +408,9 @@ FACTS_REGISTER_ALL() {
   FACTS_REGISTER(BF_Precision);
   FACTS_REGISTER(BF_RefCounting);
   FACTS_REGISTER(BF_Stream);
+  FACTS_REGISTER(BF_IntBoundaries);
+  FACTS_REGISTER(BF_ExtremeValues);
+  FACTS_REGISTER(BF_PowersOf2);
 }
 
 FACTS_MAIN

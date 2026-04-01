@@ -1,6 +1,6 @@
 # libbf++
 
-A modern C++17 wrapper around Fabrice Bellard's [libbf](https://bellard.org/libbf/) -- a small, fast arbitrary precision floating point library. Everything lives in `namespace bellard`.
+A modern C++17 wrapper around Fabrice Bellard's [libbf](https://bellard.org/libbf/) -- a small, fast arbitrary precision floating point library. This is the numeric subset of the [QJSON](https://github.com/wmacevoy/qjson) project -- it defines the numeric type semantics, bracket projection, and QJSON numeric I/O. Everything lives in `namespace bellard`.
 
 ## Types
 
@@ -56,9 +56,9 @@ Requires CMake 3.16+ and a C++17 compiler.
 ## Running Tests
 
 ```bash
-./build/test_bf          # 77 tests: BF constructors, arithmetic, math, precision, ref-counting
-./build/test_bf_dec      # 68 tests: BFDec constructors, decimal exactness, arithmetic, precision
-./build/test_numeric     # 150 tests: unbound, variant, numeric bracket, QJSON I/O, round-trip
+./build/test_bf          # BF constructors, arithmetic, math, precision, int boundaries, extreme values
+./build/test_bf_dec      # BFDec constructors, exactness, arithmetic, int boundaries, powers of 2, edge cases
+./build/test_numeric     # unbound, variant, numeric bracket, QJSON I/O, round-trip
 ```
 
 ## Architecture
@@ -132,13 +132,27 @@ unbound("x")       // named -- x == x, but x < y for different names
 
 All comparisons between unbound and any concrete type return `true` (constraint satisfaction semantics). Same-named unbounds behave like identity: `x < x` is false, `x == x` is true.
 
+### QJSON type system
+
+Bitmask-based `enum qjson_type : uint16_t` encodes type identity and group membership in the bit pattern. Type names follow QuickJS `typeof` conventions.
+
+| Type | Suffix | Hex | Group |
+|------|--------|-----|-------|
+| `QJSON_NUMBER` | (none) | `0x021` | NUMERIC |
+| `QJSON_BIGINT` | `N` | `0x022` | NUMERIC |
+| `QJSON_BIGDECIMAL` | `M` | `0x024` | NUMERIC |
+| `QJSON_BIGFLOAT` | `L` | `0x028` | NUMERIC |
+| `QJSON_UNBOUND` | `?` | `0x1FF` | all bits |
+
+Group tests: `type & QJSON_NUMERIC`, `type & QJSON_BOOLEAN`, `type & QJSON_CONTAINER`. The full enum also includes `NULL`, `FALSE`, `TRUE`, `BLOB`, `STRING`, `ARRAY`, `OBJECT` for forward compatibility with the QJSON project.
+
 ### numeric (bracket projection)
 
 Packs a value into a double interval `[lo, hi]` for fast comparison. Falls back to full-precision string reconstruction only when brackets overlap.
 
 ```cpp
-numeric n(BFDec("0.1"));      // DECIMAL, lo < hi, rep = "0.1"
-numeric m(0.5);                // DOUBLE, lo == hi == 0.5
+numeric n(BFDec("0.1"));      // BIGDECIMAL, lo < hi, rep = "0.1"
+numeric m(0.5);                // NUMBER, lo == hi == 0.5
 numeric u(unbound("x"));      // UNBOUND, lo = -inf, hi = +inf
 
 std::cout << n;                // "0.1M"
@@ -146,10 +160,10 @@ std::cin >> n;                 // parses QJSON numeric syntax
 ```
 
 **QJSON I/O format:**
-- `42` -- plain double
-- `3.14L` / `3.14l` -- BigFloat (BF)
-- `67432.50M` / `67432.50m` -- BigDecimal (BFDec)
-- `42N` / `42n` -- BigInt (stored as BF)
+- `42` -- NUMBER (IEEE 754 double)
+- `42N` / `42n` -- BIGINT (arbitrary-precision integer, stored as BF)
+- `67432.50M` / `67432.50m` -- BIGDECIMAL (exact base-10)
+- `3.14L` / `3.14l` -- BIGFLOAT (arbitrary-precision binary float)
 - `?` -- anonymous unbound
 - `?x` -- named unbound (bare identifier)
 - `?"Bob's Memo"` -- quoted unbound
@@ -173,14 +187,14 @@ The `widen<BFDec, BF>` specialization temporarily bumps decimal precision to `BF
 include/
   bf.hpp              BFAlloc, BFContext, BF, BFDec, math functions
   unbound.hpp         unbound type and comparison operators
-  numeric.hpp         NumericWiden, widen, numeric_op, NumericVariant, numeric
+  numeric.hpp         qjson_type enum, NumericWiden, widen, numeric_op, NumericVariant, numeric
 
 src/
   round.cpp           BF/BFDec example
   numeric.cpp         numeric sorting example
-  test_bf.cpp         BF tests (77)
-  test_bf_dec.cpp     BFDec tests (68)
-  test_numeric.cpp    numeric/unbound/variant tests (150)
+  test_bf.cpp         BF tests
+  test_bf_dec.cpp     BFDec tests
+  test_numeric.cpp    numeric/unbound/variant tests
 
 vendor/
   libbf/              Bellard's libbf (vendored from bellard.org/libbf/)
